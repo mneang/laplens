@@ -1,0 +1,11 @@
+# Ignore raw race data
+data/
+*.csv
+
+# Jupyter noise
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+
+# OS cruft
+.DS_Store
