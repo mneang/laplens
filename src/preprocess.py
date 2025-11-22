@@ -218,18 +218,30 @@ def build_lap_aggregates(telemetry_assigned: pd.DataFrame) -> pd.DataFrame:
 # ----------------------------
 def build_pipeline_outputs(base_path: str) -> dict:
     """
-    Convenience function: load -> lap windows -> pivot telem -> assign laps -> aggregates.
+    Convenience function: load -> lap windows -> align timestamps ->
+    pivot telem -> assign laps -> aggregates.
     Returns a dict of outputs for the notebook/app.
     """
     dfs = load_race1_data(base_path)
+
+    # 1) Lap windows from start/end CSVs
     lap_windows = build_lap_windows(dfs["lap_start"], dfs["lap_end"])
-    telem_wide = pivot_telemetry_long_to_wide(dfs["telemetry"])
-    telem_with_laps = assign_laps_to_telemetry(telem_wide, lap_windows)
+
+    # 2) Telemetry long -> wide
+    telem_wide_raw = pivot_telemetry_long_to_wide(dfs["telemetry"])
+
+    # 3) Align telemetry timestamps to lap windows
+    telem_wide_aligned = align_timestamps(telem_wide_raw, lap_windows)
+
+    # 4) Assign laps using time windows
+    telem_with_laps = assign_laps_to_telemetry(telem_wide_aligned, lap_windows)
+
+    # 5) Lap-level aggregates
     lap_agg = build_lap_aggregates(telem_with_laps)
 
     return {
         "lap_windows": lap_windows,
-        "telemetry_wide": telem_wide,
+        "telemetry_wide": telem_wide_aligned,
         "telemetry_with_laps": telem_with_laps,
         "lap_aggregates": lap_agg,
         "lap_time_raw": dfs["lap_time"],

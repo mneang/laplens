@@ -12,7 +12,6 @@ sys.path.append(".")
 
 from src import preprocess
 
-
 # ---------------------------------
 # 0. Basic config
 # ---------------------------------
@@ -24,44 +23,45 @@ st.set_page_config(
     layout="wide",
 )
 
+sns.set_style("whitegrid")
+
 
 # ---------------------------------
 # 1. Cached data loading
 # ---------------------------------
 @st.cache_data(show_spinner=True)
-def load_outputs(base_path: str):
-    """Load and preprocess race data once, then cache."""
-    outputs = preprocess.build_pipeline_outputs(base_path)
-    return outputs
+def load_outputs(base_path: str) -> dict:
+    """
+    Load and preprocess race data once, then cache the outputs.
+    This calls your preprocess.build_pipeline_outputs().
+    """
+    return preprocess.build_pipeline_outputs(base_path)
 
 
 def build_driver_summary(outputs: dict, vehicle_id: str, outing: float = 0.0) -> pd.DataFrame:
     """
     Build lap-level summary + LapLens performance score for a given vehicle and outing.
-    Mirrors the logic from your notebook, but kept local to the app so we don't break anything.
+
+    IMPORTANT: we use the already-processed lap_aggregates + lap_time_raw from preprocess.
+    We do NOT realign or re-aggregate inside the app – that keeps things light and stable.
     """
-    # 1) Align and assign laps
-    aligned = preprocess.align_timestamps(outputs["telemetry_wide"], outputs["lap_windows"])
-    telem_with_laps = preprocess.assign_laps_to_telemetry(aligned, outputs["lap_windows"])
+    lap_agg_all = outputs["lap_aggregates"]
 
-    # 2) Aggregate to lap-level
-    lap_agg = preprocess.build_lap_aggregates(telem_with_laps)
-
-    # 3) Quality filter and select driver/outing
-    lap_agg = lap_agg[
-        (lap_agg["lap"] < 1000) &
-        (lap_agg["vehicle_id"] == vehicle_id) &
-        (lap_agg["outing"] == outing)
+    # 1) Filter to this car + outing and keep valid laps
+    lap_agg = lap_agg_all[
+        (lap_agg_all["vehicle_id"] == vehicle_id)
+        & (lap_agg_all["outing"] == outing)
+        & (lap_agg_all["lap"] < 1000)
     ].copy()
 
-    # Optional quality gate: drop laps with very few samples (e.g., in/out laps)
-    lap_agg = lap_agg[lap_agg["samples"] >= 1500].copy()
+    if lap_agg.empty:
+        return pd.DataFrame()
 
-    # 4) Merge in official lap times
+    # 2) Bring in official lap times
     lap_times = outputs["lap_time_raw"].copy()
-    lap_times_clean = lap_times[["vehicle_id", "outing", "lap", "value"]].rename(
-        columns={"value": "official_lap_time_raw"}
-    )
+    lap_times_clean = lap_times[
+        ["vehicle_id", "outing", "lap", "value"]
+    ].rename(columns={"value": "official_lap_time_raw"})
 
     summary = pd.merge(
         lap_agg,
@@ -70,14 +70,20 @@ def build_driver_summary(outputs: dict, vehicle_id: str, outing: float = 0.0) ->
         how="left",
     )
 
-    # Convert official lap time to seconds if values look like milliseconds
+    # Convert to seconds if the values look like ms
     if summary["official_lap_time_raw"].max() > 1000:
         summary["official_lap_time_s"] = summary["official_lap_time_raw"] / 1000.0
     else:
         summary["official_lap_time_s"] = summary["official_lap_time_raw"]
 
-    # 5) Compute LapLens performance score (same idea as notebook)
-    data = summary.copy()
+    # 3) Quality gate on samples, with a fallback so the table is never empty
+    filtered = summary[summary["samples"] >= 1500].copy()
+    if filtered.empty:
+        # If our strict filter kills everything, fall back to unfiltered summary
+        filtered = summary.copy()
+
+    # 4) LapLens performance score (same spirit as notebook)
+    data = filtered.copy()
     metrics = ["avg_speed", "avg_throttle", "avg_brake_f"]
 
     for m in metrics:
@@ -87,19 +93,19 @@ def build_driver_summary(outputs: dict, vehicle_id: str, outing: float = 0.0) ->
             if (m_max - m_min) > 1e-6:
                 data[f"{m}_norm"] = (data[m] - m_min) / (m_max - m_min)
             else:
-                data[f"{m}_norm"] = 0.5  # fallback if constant
+                # If metric is constant, treat as neutral
+                data[f"{m}_norm"] = 0.5
 
     WEIGHT_SPEED = 0.55
     WEIGHT_THROTTLE = 0.30
     WEIGHT_BRAKE = 0.15
 
     data["performance_score"] = (
-        data.get("avg_speed_norm", 0) * WEIGHT_SPEED +
-        data.get("avg_throttle_norm", 0) * WEIGHT_THROTTLE +
-        data.get("avg_brake_f_norm", 0) * WEIGHT_BRAKE
+        data.get("avg_speed_norm", 0) * WEIGHT_SPEED
+        + data.get("avg_throttle_norm", 0) * WEIGHT_THROTTLE
+        + data.get("avg_brake_f_norm", 0) * WEIGHT_BRAKE
     ) * 100
 
-    # Sort by lap for display
     data = data.sort_values("lap").reset_index(drop=True)
     return data
 
@@ -113,8 +119,7 @@ def compute_consistency_index(df: pd.DataFrame) -> float:
         return 50.0
 
     std = df["performance_score"].std()
-    # Map std to [0, 100]; you can tune the scale factor
-    # Assume std in [0, 20] is realistic range.
+    # Assume realistic std range ~ [0, 20]
     scale = 20.0
     dci = 100 * max(0.0, 1.0 - (std / scale))
     return round(dci, 1)
@@ -122,7 +127,7 @@ def compute_consistency_index(df: pd.DataFrame) -> float:
 
 def generate_coaching_note(row: pd.Series, best_row: pd.Series) -> str:
     """
-    Very simple rule-based coaching note for a lap.
+    Rule-based coaching note per lap.
     Uses performance_score, throttle, brake, and lap time.
     """
     notes = []
@@ -139,28 +144,29 @@ def generate_coaching_note(row: pd.Series, best_row: pd.Series) -> str:
         if delta < 5:
             notes.append("Very close to your best – strong lap overall.")
         elif delta < 15:
-            notes.append("Solid lap, but there's still room to push a bit more.")
+            notes.append("Solid lap, but there’s still room to push a bit more.")
         else:
-            notes.append("Significant gap to your best – opportunity to gain time here.")
+            notes.append("Significant gap to your best – opportunity to gain time on this lap.")
 
-    # Throttle/brake style
+    # Throttle profile
     if not np.isnan(throttle):
         if throttle < 60:
             notes.append("Throttle usage is conservative; focus on earlier and longer throttle application.")
         elif throttle > 90:
-            notes.append("High throttle usage – ensure you’re not over-driving on corner exits.")
+            notes.append("Very high throttle usage – check for over-driving on corner exits.")
         else:
             notes.append("Throttle use is balanced for this lap.")
 
+    # Brake profile
     if not np.isnan(brake_f):
         if brake_f > 6:
-            notes.append("Heavy braking – check if earlier, smoother braking could stabilize entry.")
+            notes.append("Heavy braking – experiment with earlier, smoother braking for stability.")
         elif brake_f < 3:
-            notes.append("Very light braking – confirm you’re still making full use of braking zones.")
+            notes.append("Light braking – confirm you’re still fully exploiting the braking zones.")
         else:
             notes.append("Braking looks efficient and controlled.")
 
-    # Lap time hint
+    # Lap time
     if not np.isnan(lap_time):
         notes.append(f"Official lap time: {lap_time:.3f} s.")
 
@@ -171,45 +177,67 @@ def generate_coaching_note(row: pd.Series, best_row: pd.Series) -> str:
 # 2. App layout
 # ---------------------------------
 def main():
-    st.title("🏎️ LapLens – COTA Race 1 Post-Event Analysis")
+    st.title("🏁 LapLens – COTA Race 1 Post-Event Driver Analysis")
+
     st.markdown(
         """
-        LapLens turns raw TRD telemetry + official lap times into a **driver-focused race debrief**.
+        LapLens turns raw **TRD telemetry** and **official lap times** into a driver-focused race debrief.
 
-        **For each lap**, we:
-        - Rebuild the stint from ECU data (aligned with lap timing).
-        - Compute lap-level metrics: speed, throttle, brake usage, sample quality.
+        For each lap we:
+        - Rebuild the stint from ECU telemetry aligned with official lap timing.
+        - Compute lap-level metrics: speed, throttle usage, front brake pressure, and sample quality.
         - Derive a **LapLens performance score (0–100)**.
-        - Highlight best vs worst laps and generate short coaching notes.
+        - Highlight best vs worst laps and auto-generate short coaching notes.
 
-        Use the controls on the left to explore different cars and outings.
+        Use the controls in the sidebar to select a car and outing.
         """
     )
 
-    # Sidebar configuration
+    # ------------------- Sidebar -------------------
     st.sidebar.header("Configuration")
-    st.sidebar.write("LapLens – COTA Race 1 settings")
+    st.sidebar.caption("LapLens – COTA Race 1 settings")
 
+    # Reload button: clear cache & rerun
+    if st.sidebar.button("🔁 Reload data (clear cache)"):
+        load_outputs.clear()
+        st.sidebar.success("Cache cleared – reloading data…")
+        st.rerun()
+
+    # Load data once (from cache)
     outputs = load_outputs(BASE_PATH)
     lap_agg_all = outputs["lap_aggregates"]
 
-    vehicles = sorted(lap_agg_all["vehicle_id"].unique())
-    vehicle_id = st.sidebar.selectbox("Select car (vehicle_id)", vehicles, index=0)
+    if lap_agg_all is None or len(lap_agg_all) == 0:
+        st.error(
+            "No lap aggregates were produced. "
+            "Verify that the COTA Race 1 CSVs are present under `data/COTA_Race1`."
+        )
+        return
 
-    outing_options = sorted(lap_agg_all[lap_agg_all["vehicle_id"] == vehicle_id]["outing"].unique())
+    # Vehicle selection
+    vehicles = sorted(lap_agg_all["vehicle_id"].unique())
+    default_idx = vehicles.index("GR86-006-7") if "GR86-006-7" in vehicles else 0
+    vehicle_id = st.sidebar.selectbox("Select car (vehicle_id)", vehicles, index=default_idx)
+
+    # Outing selection (usually 0.0 for this dataset)
+    outing_options = sorted(
+        lap_agg_all[lap_agg_all["vehicle_id"] == vehicle_id]["outing"].unique()
+    )
     outing = st.sidebar.selectbox("Select outing", outing_options, index=0)
 
     st.sidebar.markdown("---")
-    st.sidebar.caption(f"Track: Circuit of the Americas • Event: COTA Race 1")
+    st.sidebar.caption("Track: Circuit of the Americas • Event: COTA Race 1")
 
-    # Build driver summary
+    # ------------------- Driver summary -------------------
     driver_df = build_driver_summary(outputs, vehicle_id, outing)
 
     if driver_df.empty:
-        st.warning("No valid laps found for this configuration (after quality filters).")
+        st.warning(
+            "No valid laps found for this configuration after quality filtering. "
+            "Try another car, or reduce filters in the code if needed."
+        )
         return
 
-    # Metrics / KPIs
     best_row = driver_df.loc[driver_df["performance_score"].idxmax()]
     worst_row = driver_df.loc[driver_df["performance_score"].idxmin()]
     dci = compute_consistency_index(driver_df)
@@ -220,45 +248,47 @@ def main():
     col3.metric("Worst Lap", f"Lap {int(worst_row['lap'])}", f"{worst_row['performance_score']:.1f} / 100")
     col4.metric("Driver Consistency Index", f"{dci} / 100")
 
+    # ------------------- Table with coaching notes -------------------
     st.markdown("### 1. Lap Table with LapLens Score & Coaching Notes")
 
-    # Build per-lap coaching notes
-    coaching_notes = []
-    for _, row in driver_df.iterrows():
-        note = generate_coaching_note(row, best_row)
-        coaching_notes.append(note)
+    coaching_notes = [
+        generate_coaching_note(row, best_row) for _, row in driver_df.iterrows()
+    ]
 
-    table_df = driver_df[[
-        "lap", "official_lap_time_s", "avg_speed", "avg_throttle", "avg_brake_f", "performance_score"
-    ]].copy()
-    table_df.rename(columns={
-        "lap": "Lap",
-        "official_lap_time_s": "Lap Time (s)",
-        "avg_speed": "Avg Speed (km/h)",
-        "avg_throttle": "Avg Throttle (%)",
-        "avg_brake_f": "Avg Front Brake (bar)",
-        "performance_score": "LapLens Score (0–100)",
-    }, inplace=True)
+    table_df = driver_df[
+        ["lap", "official_lap_time_s", "avg_speed", "avg_throttle", "avg_brake_f", "performance_score"]
+    ].copy()
+
+    table_df.rename(
+        columns={
+            "lap": "Lap",
+            "official_lap_time_s": "Lap Time (s)",
+            "avg_speed": "Avg Speed (km/h)",
+            "avg_throttle": "Avg Throttle (%)",
+            "avg_brake_f": "Avg Front Brake (bar)",
+            "performance_score": "LapLens Score (0–100)",
+        },
+        inplace=True,
+    )
     table_df["Coaching Note"] = coaching_notes
 
     st.dataframe(
-        table_df.style.format({
-            "Lap Time (s)": "{:.3f}",
-            "Avg Speed (km/h)": "{:.2f}",
-            "Avg Throttle (%)": "{:.2f}",
-            "Avg Front Brake (bar)": "{:.2f}",
-            "LapLens Score (0–100)": "{:.1f}",
-        }),
+        table_df.style.format(
+            {
+                "Lap Time (s)": "{:.3f}",
+                "Avg Speed (km/h)": "{:.2f}",
+                "Avg Throttle (%)": "{:.2f}",
+                "Avg Front Brake (bar)": "{:.2f}",
+                "LapLens Score (0–100)": "{:.1f}",
+            }
+        ),
         use_container_width=True,
     )
 
-    # -------------------------
-    # 3. Visuals
-    # -------------------------
+    # ------------------- Performance trends -------------------
     st.markdown("### 2. Performance Trends per Lap")
     left, right = st.columns(2)
 
-    # Speed trend
     with left:
         fig, ax = plt.subplots(figsize=(6, 4))
         sns.lineplot(data=driver_df, x="lap", y="avg_speed", marker="o", ax=ax)
@@ -268,11 +298,24 @@ def main():
         ax.grid(True)
         st.pyplot(fig)
 
-    # Inputs trend
     with right:
         fig2, ax2 = plt.subplots(figsize=(6, 4))
-        sns.lineplot(data=driver_df, x="lap", y="avg_throttle", marker="o", label="Throttle (%)", ax=ax2)
-        sns.lineplot(data=driver_df, x="lap", y="avg_brake_f", marker="o", label="Front Brake (bar)", ax=ax2)
+        sns.lineplot(
+            data=driver_df,
+            x="lap",
+            y="avg_throttle",
+            marker="o",
+            label="Throttle (%)",
+            ax=ax2,
+        )
+        sns.lineplot(
+            data=driver_df,
+            x="lap",
+            y="avg_brake_f",
+            marker="o",
+            label="Front Brake (bar)",
+            ax=ax2,
+        )
         ax2.set_title("Driver Inputs per Lap")
         ax2.set_xlabel("Lap")
         ax2.set_ylabel("Intensity")
@@ -280,9 +323,7 @@ def main():
         ax2.grid(True)
         st.pyplot(fig2)
 
-    # -------------------------
-    # 4. LapLens vs Lap Time
-    # -------------------------
+    # ------------------- LapLens score vs time -------------------
     st.markdown("### 3. LapLens Score vs Official Lap Time")
 
     fig3, ax3 = plt.subplots(figsize=(7, 5))
@@ -297,7 +338,6 @@ def main():
     ax3.set_ylabel("Official Lap Time (s)")
     ax3.grid(True)
 
-    # Optional simple linear fit
     if len(driver_df) >= 2:
         x = driver_df["performance_score"].values
         y = driver_df["official_lap_time_s"].values
@@ -313,8 +353,9 @@ def main():
     st.markdown(
         """
         **Interpretation:**
-        - Points further left and higher ⇒ conservative / slower laps.
-        - Points further right and lower ⇒ strong laps with good LapLens scores and fast times.
+
+        - Points farther left and higher ⇒ conservative / slower laps.
+        - Points farther right and lower ⇒ strong laps with high LapLens score and fast time.
         """
     )
 
