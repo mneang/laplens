@@ -88,16 +88,14 @@ The UI is intentionally **simple and dark-themed**, optimized for use in a garag
 
 ### 3.1 Screenshots (Example Views)
 
-> (Screenshots to be added)
-
 - **Main dashboard & KPIs**  
-  ![LapLens dashboard overview](docs/img/dashboard_overview.png)
+  <img width="1388" height="488" alt="laplens overview" src="https://github.com/user-attachments/assets/55c26756-f851-4c01-98fd-c57f9dd2a1ba" />
 
 - **Lap table with LapLens score & coaching notes**  
-  ![LapLens lap table with coaching notes](docs/img/lap_table_coaching.png)
+  <img width="1763" height="477" alt="laplens score and coaching notes table" src="https://github.com/user-attachments/assets/1671ccda-afb9-4c2c-a8b0-f2d6e8fc9abd" />
 
 - **LapLens score vs official lap time scatter**  
-  ![LapLens score vs lap time](docs/img/score_vs_laptime.png)
+  <img width="1236" height="939" alt="average time per lap" src="https://github.com/user-attachments/assets/368bdf32-5ee0-4cdc-b1f2-76f8fd5e5ede" />
 
 ---
 
@@ -230,19 +228,20 @@ laplens/
 ### 6.1 GitHub Codespaces
 
 This project is designed to run smoothly in **GitHub Codespaces**.
-	1.	Open the repo in Codespaces.
-	2.	Make sure the virtual environment is active (e.g., .venv).
-	3.	Install dependencies (if not done automatically):
+
+1. Open the repo in Codespaces.
+2. Make sure the virtual environment is active (e.g. `.venv`).
+3. Install dependencies (if not done automatically):
   ```bash
   pip install -r requirements.txt
   ```
 
-  4. Launch the app:
+4. Launch the app:
   ```bash
   streamlit run streamlit_app.py
   ```
 
-  5.	A browser tab (or Codespaces port) will open with the LapLens dashboard.
+5.	A browser tab (or Codespaces port) will open with the LapLens dashboard.
 
 ### 6.2 Running Locally (Desktop)
 
