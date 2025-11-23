@@ -20,6 +20,10 @@ The goal is a **post-event debrief assistant** that a driver or engineer can ope
 
 > “Where was this driver strong? Where are the easiest wins next time we come to COTA?”
 
+Unlike a generic lap-time dashboard, LapLens focuses on **turning telemetry into coaching language**: 
+instead of just numbers, it gives a ranked list of laps plus specific notes a driver can act on before 
+the next session.
+
 ---
 
 ## 2. What LapLens Delivers
@@ -46,11 +50,11 @@ For each selected car & outing:
 
 ### ✅ Streamlit App (Primary Deliverable)
 
-`streamlit_app.py` provides an interactive dashboard:
+`streamlit_app.py` provides an interactive dashboard for **any car in the COTA Race 1 dataset**:
 
 1. **Configuration sidebar**
-   - Select **vehicle_id** (e.g. `GR86-006-7`)
-   - Select **outing** (e.g. `0.0`)
+   - Select **vehicle_id** (any car present in the TRD COTA Race 1 telemetry, e.g. `GR86-006-7`)
+   - Select **outing** (e.g. `0.0`; multiple outings are supported where available)
    - “Reload data (clear cache)” to rebuild from CSVs
 
 2. **Headline KPIs**
@@ -81,6 +85,19 @@ For each selected car & outing:
      - Right & low → strong, efficient laps
 
 The UI is intentionally **simple and dark-themed**, optimized for use in a garage or at-track environment.
+
+### 3.1 Screenshots (Example Views)
+
+> (Screenshots to be added)
+
+- **Main dashboard & KPIs**  
+  ![LapLens dashboard overview](docs/img/dashboard_overview.png)
+
+- **Lap table with LapLens score & coaching notes**  
+  ![LapLens lap table with coaching notes](docs/img/lap_table_coaching.png)
+
+- **LapLens score vs official lap time scatter**  
+  ![LapLens score vs lap time](docs/img/score_vs_laptime.png)
 
 ---
 
@@ -264,21 +281,28 @@ To inspect or extend the analysis:
 
 ## 7. How to Use LapLens (for Judges & Engineers)
 
-1.	**Launch the app** using streamlit run streamlit_app.py.
-2.	In the sidebar:
-	•	Confirm data loaded successfully (no error banner).
-	•	Select a **car** (vehicle_id) and **outing**.
-3.	Review the **headline KPIs**:
-	•	Best lap vs fastest lap – are they the same?
-	•	Driver Consistency Index – is this a stable driver or very up-and-down?
-4.	Scroll to the **Lap Table with LapLens Score & Coaching Notes**:
-	•	Read coaching notes for the **worst laps** first.
-	•	Use those notes as talking points for driver debrief.
-5.	Inspect **Performance Trends per Lap**:
-	•	Look for steps in speed/throttle as tires warm up or fall off.
-	•	Check if braking becomes heavier as the driver searches for time.
-6.	Analyze **LapLens Score vs Official Lap Time**:
-	•	Confirm that higher LapLens scores generally map to faster times.
-	•	Identify outlier laps where the driver “worked hard” but did not gain time (possible setup or line issue).
+1. **Launch the app** – `streamlit run streamlit_app.py`.
+2. **Pick a car + outing** – use the sidebar to select `vehicle_id` and `outing`.
+3. **Scan the headline KPIs** – best lap, fastest lap time, worst lap, and Driver Consistency Index.
+4. **Read the coaching notes** – start with the lowest LapLens scores to find “problem laps”.
+5. **Check the trends** – confirm how speed, throttle, and brake evolve across the stint.
+6. **Validate LapLens vs lap time** – use the scatter plot to see if higher scores actually map to faster laps, and flag any outliers for deeper review.
 
 This flow is designed to match how real teams debrief: **top-down → identify issues → drill into specific laps**.
+
+---
+
+## 8. Limitations & Future Ideas (Short)
+
+Current demo focus:
+
+- COTA Race 1 only (GR86 GR Cup dataset).
+- LapLens score uses **speed, throttle, and front brake** only – no tires, fuel, or sector times yet.
+
+Possible next steps:
+
+- Extend to **other races / tracks** in the TRD dataset.
+- Add **corner profiles** (entry / mid / exit) using `Steering_Angle`, `accx_can`, `accy_can`.
+- Integrate **video or sector overlays** so engineers can jump directly from a flagged lap to footage.
+- Allow exporting per-lap LapLens reports as **PDF** for sharing with drivers after the event.
+
